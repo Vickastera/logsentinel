@@ -1,7 +1,30 @@
+from collections import Counter
 from flask import Flask, request
 from database import get_all_events, search_events
 
 app = Flask(__name__)
+
+
+def summarize_events(events):
+    event_type_counts = Counter()
+    source_ip_counts = Counter()
+
+    for event in events:
+        event_type = event[4]
+        source_ip = event[3]
+
+        if event_type:
+            event_type_counts[event_type] += 1
+
+        if source_ip:
+            source_ip_counts[source_ip] += 1
+
+    return {
+        "total_events": len(events),
+        "event_type_counts": dict(event_type_counts),
+        "top_source_ips": source_ip_counts.most_common(5),
+    }
+
 
 @app.route("/")
 def home():
@@ -12,6 +35,8 @@ def home():
     else:
         events = get_all_events()
 
+    stats = summarize_events(events)
+
     html = """
     <html>
     <head>
@@ -19,12 +44,30 @@ def home():
         <style>
             body { font-family: Arial; margin: 40px; background: #f7f7f7; }
             h1 { color: #222; }
-            table { width: 100%; border-collapse: collapse; background: white; }
+            h2 { color: #333; margin-top: 30px; }
+            table { width: 100%; border-collapse: collapse; background: white; margin-top: 20px; }
             th, td { border: 1px solid #ddd; padding: 10px; text-align: left; }
             th { background: #333; color: white; }
             form { margin-bottom: 20px; }
             input[type=text] { padding: 8px; width: 300px; }
             button { padding: 8px 12px; }
+            .stats-box {
+                background: white;
+                border: 1px solid #ddd;
+                padding: 20px;
+                margin-bottom: 20px;
+            }
+            .stats-section {
+                margin-bottom: 20px;
+            }
+            ul {
+                margin: 10px 0;
+                padding-left: 20px;
+            }
+            .empty {
+                color: #666;
+                font-style: italic;
+            }
         </style>
     </head>
     <body>
@@ -33,6 +76,24 @@ def home():
             <input type="text" name="q" placeholder="Buscar IP, evento o texto..." value="{query}">
             <button type="submit">Buscar</button>
         </form>
+
+        <div class="stats-box">
+            <div class="stats-section">
+                <h2>Summary</h2>
+                <p><strong>Total displayed events:</strong> {total_events}</p>
+            </div>
+
+            <div class="stats-section">
+                <h2>Count by Event Type</h2>
+                {event_type_html}
+            </div>
+
+            <div class="stats-section">
+                <h2>Top 5 Source IPs</h2>
+                {top_ips_html}
+            </div>
+        </div>
+
         <table>
             <tr>
                 <th>ID</th>
@@ -42,7 +103,12 @@ def home():
                 <th>Event Type</th>
                 <th>Message</th>
             </tr>
-    """.format(query=query)
+    """.format(
+        query=query,
+        total_events=stats["total_events"],
+        event_type_html=build_event_type_html(stats["event_type_counts"]),
+        top_ips_html=build_top_ips_html(stats["top_source_ips"]),
+    )
 
     for event in events:
         html += f"""
@@ -63,6 +129,29 @@ def home():
     """
 
     return html
+
+
+def build_event_type_html(event_type_counts):
+    if not event_type_counts:
+        return '<p class="empty">No events to summarize.</p>'
+
+    html = "<ul>"
+    for event_type, count in event_type_counts.items():
+        html += f"<li><strong>{event_type}</strong>: {count}</li>"
+    html += "</ul>"
+    return html
+
+
+def build_top_ips_html(top_source_ips):
+    if not top_source_ips:
+        return '<p class="empty">No source IPs to display.</p>'
+
+    html = "<ul>"
+    for ip, count in top_source_ips:
+        html += f"<li><strong>{ip}</strong>: {count} events</li>"
+    html += "</ul>"
+    return html
+
 
 if __name__ == "__main__":
     app.run(debug=True)
