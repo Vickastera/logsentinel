@@ -1,61 +1,33 @@
-from collections import Counter
 from flask import Flask, request, jsonify
-from database import get_all_events, search_events
+from database import get_all_events, search_events, init_db
+from collector import process_logs
 
 app = Flask(__name__)
+init_db()
+process_logs()
 
 
 def summarize_events(events):
-    event_type_counts = Counter()
-    source_ip_counts = Counter()
+    event_type_counts = {}
+    source_ip_counts = {}
 
     for event in events:
-        event_type = event[4]
-        source_ip = event[3]
+        source_ip = event[3] or "unknown"
+        event_type = event[4] or "unknown"
 
-        if event_type:
-            event_type_counts[event_type] += 1
+        event_type_counts[event_type] = event_type_counts.get(event_type, 0) + 1
+        source_ip_counts[source_ip] = source_ip_counts.get(source_ip, 0) + 1
 
-        if source_ip:
-            source_ip_counts[source_ip] += 1
+    top_source_ips = sorted(
+        source_ip_counts.items(),
+        key=lambda item: item[1],
+        reverse=True
+    )[:5]
 
     return {
         "total_events": len(events),
-        "event_type_counts": dict(event_type_counts),
-        "top_source_ips": source_ip_counts.most_common(5),
-    }
-
-
-def build_event_type_html(event_type_counts):
-    if not event_type_counts:
-        return '<p class="empty">No events to summarize.</p>'
-
-    html = "<ul>"
-    for event_type, count in event_type_counts.items():
-        html += f"<li><strong>{event_type}</strong>: {count}</li>"
-    html += "</ul>"
-    return html
-
-
-def build_top_ips_html(top_source_ips):
-    if not top_source_ips:
-        return '<p class="empty">No source IPs to display.</p>'
-
-    html = "<ul>"
-    for ip, count in top_source_ips:
-        html += f"<li><strong>{ip}</strong>: {count} events</li>"
-    html += "</ul>"
-    return html
-
-
-def event_to_dict(event):
-    return {
-        "id": event[0],
-        "timestamp": event[1],
-        "severity": event[2],
-        "source_ip": event[3],
-        "event_type": event[4],
-        "message": event[5],
+        "event_type_counts": event_type_counts,
+        "top_source_ips": top_source_ips,
     }
 
 
@@ -70,104 +42,330 @@ def home():
 
     stats = summarize_events(events)
 
-    html = """
-    <html>
-    <head>
-        <title>LogSentinel</title>
-        <style>
-            body { font-family: Arial; margin: 40px; background: #f7f7f7; }
-            h1 { color: #222; }
-            h2 { color: #333; margin-top: 30px; }
-            table { width: 100%; border-collapse: collapse; background: white; margin-top: 20px; }
-            th, td { border: 1px solid #ddd; padding: 10px; text-align: left; }
-            th { background: #333; color: white; }
-            form { margin-bottom: 20px; }
-            input[type=text] { padding: 8px; width: 300px; }
-            button { padding: 8px 12px; }
-            .stats-box {
-                background: white;
-                border: 1px solid #ddd;
-                padding: 20px;
-                margin-bottom: 20px;
-            }
-            .stats-section {
-                margin-bottom: 20px;
-            }
-            ul {
-                margin: 10px 0;
-                padding-left: 20px;
-            }
-            .empty {
-                color: #666;
-                font-style: italic;
-            }
-            .api-link {
-                margin-top: 10px;
-                display: inline-block;
-            }
-        </style>
-    </head>
-    <body>
-        <h1>LogSentinel Dashboard</h1>
-        <form method="get">
-            <input type="text" name="q" placeholder="Buscar IP, evento o texto..." value="{query}">
-            <button type="submit">Buscar</button>
-        </form>
-
-        <p class="api-link">
-            <a href="/api/events">View JSON API</a>
-        </p>
-
-        <div class="stats-box">
-            <div class="stats-section">
-                <h2>Summary</h2>
-                <p><strong>Total displayed events:</strong> {total_events}</p>
-            </div>
-
-            <div class="stats-section">
-                <h2>Count by Event Type</h2>
-                {event_type_html}
-            </div>
-
-            <div class="stats-section">
-                <h2>Top 5 Source IPs</h2>
-                {top_ips_html}
-            </div>
-        </div>
-
-        <table>
-            <tr>
-                <th>ID</th>
-                <th>Timestamp</th>
-                <th>Severity</th>
-                <th>Source IP</th>
-                <th>Event Type</th>
-                <th>Message</th>
-            </tr>
-    """.format(
-        query=query,
-        total_events=stats["total_events"],
-        event_type_html=build_event_type_html(stats["event_type_counts"]),
-        top_ips_html=build_top_ips_html(stats["top_source_ips"]),
+    event_type_html = (
+        "<p class='muted'>No events found.</p>"
+        if not stats["event_type_counts"]
+        else "<ul class='stats-list'>" + "".join(
+            f"<li><span>{event_type}</span><strong>{count}</strong></li>"
+            for event_type, count in stats["event_type_counts"].items()
+        ) + "</ul>"
     )
 
+    top_ips_html = (
+        "<p class='muted'>No source IPs available.</p>"
+        if not stats["top_source_ips"]
+        else "<ul class='stats-list'>" + "".join(
+            f"<li><span>{ip}</span><strong>{count}</strong></li>"
+            for ip, count in stats["top_source_ips"]
+        ) + "</ul>"
+    )
+
+    rows_html = ""
     for event in events:
-        html += f"""
+        severity = event[2] or "UNKNOWN"
+        severity_class = "sev-info"
+
+        if severity == "ERROR":
+            severity_class = "sev-error"
+        elif severity == "WARNING":
+            severity_class = "sev-warning"
+        elif severity == "INFO":
+            severity_class = "sev-info"
+
+        rows_html += f"""
         <tr>
             <td>{event[0]}</td>
             <td>{event[1]}</td>
-            <td>{event[2]}</td>
+            <td><span class="badge {severity_class}">{severity}</span></td>
             <td>{event[3]}</td>
             <td>{event[4]}</td>
             <td>{event[5]}</td>
         </tr>
         """
 
-    html += """
-        </table>
+    if not rows_html:
+        rows_html = """
+        <tr>
+            <td colspan="6" class="empty-row">No events to display.</td>
+        </tr>
+        """
+
+    html = """
+    <html>
+    <head>
+        <title>LogSentinel</title>
+        <style>
+            * {
+                box-sizing: border-box;
+            }
+
+            body {
+                margin: 0;
+                font-family: Arial, sans-serif;
+                background: #0f172a;
+                color: #e5e7eb;
+            }
+
+            .container {
+                max-width: 1200px;
+                margin: 0 auto;
+                padding: 30px;
+            }
+
+            .header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 24px;
+                flex-wrap: wrap;
+                gap: 12px;
+            }
+
+            .title {
+                margin: 0;
+                font-size: 32px;
+                color: #f8fafc;
+            }
+
+            .subtitle {
+                margin: 6px 0 0;
+                color: #94a3b8;
+                font-size: 14px;
+            }
+
+            .search-card,
+            .card,
+            .table-card {
+                background: #111827;
+                border: 1px solid #1f2937;
+                border-radius: 16px;
+                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+            }
+
+            .search-card {
+                padding: 18px;
+                margin-bottom: 24px;
+            }
+
+            .search-form {
+                display: flex;
+                gap: 12px;
+                flex-wrap: wrap;
+            }
+
+            .search-input {
+                flex: 1;
+                min-width: 240px;
+                padding: 12px 14px;
+                border-radius: 10px;
+                border: 1px solid #334155;
+                background: #0b1220;
+                color: #e5e7eb;
+                outline: none;
+            }
+
+            .search-input::placeholder {
+                color: #64748b;
+            }
+
+            .search-btn {
+                padding: 12px 18px;
+                border: none;
+                border-radius: 10px;
+                background: #2563eb;
+                color: white;
+                font-weight: bold;
+                cursor: pointer;
+            }
+
+            .search-btn:hover {
+                background: #1d4ed8;
+            }
+
+            .stats-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+                gap: 18px;
+                margin-bottom: 24px;
+            }
+
+            .card {
+                padding: 20px;
+            }
+
+            .card h3 {
+                margin: 0 0 12px;
+                font-size: 16px;
+                color: #cbd5e1;
+            }
+
+            .big-number {
+                font-size: 34px;
+                font-weight: bold;
+                color: #f8fafc;
+            }
+
+            .muted {
+                color: #94a3b8;
+                margin: 0;
+            }
+
+            .stats-list {
+                list-style: none;
+                padding: 0;
+                margin: 0;
+            }
+
+            .stats-list li {
+                display: flex;
+                justify-content: space-between;
+                padding: 8px 0;
+                border-bottom: 1px solid #1f2937;
+                color: #e5e7eb;
+            }
+
+            .stats-list li:last-child {
+                border-bottom: none;
+            }
+
+            .table-card {
+                overflow: hidden;
+            }
+
+            .table-header {
+                padding: 18px 20px;
+                border-bottom: 1px solid #1f2937;
+                font-size: 18px;
+                font-weight: bold;
+                color: #f8fafc;
+            }
+
+            table {
+                width: 100%;
+                border-collapse: collapse;
+            }
+
+            th {
+                text-align: left;
+                padding: 14px 16px;
+                background: #0b1220;
+                color: #94a3b8;
+                font-size: 13px;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+            }
+
+            td {
+                padding: 14px 16px;
+                border-top: 1px solid #1f2937;
+                color: #e5e7eb;
+                vertical-align: top;
+            }
+
+            tr:hover {
+                background: #0b1220;
+            }
+
+            .badge {
+                display: inline-block;
+                padding: 6px 10px;
+                border-radius: 999px;
+                font-size: 12px;
+                font-weight: bold;
+            }
+
+            .sev-error {
+                background: rgba(239, 68, 68, 0.18);
+                color: #fca5a5;
+                border: 1px solid rgba(239, 68, 68, 0.35);
+            }
+
+            .sev-warning {
+                background: rgba(245, 158, 11, 0.18);
+                color: #fcd34d;
+                border: 1px solid rgba(245, 158, 11, 0.35);
+            }
+
+            .sev-info {
+                background: rgba(59, 130, 246, 0.18);
+                color: #93c5fd;
+                border: 1px solid rgba(59, 130, 246, 0.35);
+            }
+
+            .empty-row {
+                text-align: center;
+                color: #94a3b8;
+                padding: 30px;
+            }
+
+            .footer-note {
+                margin-top: 18px;
+                color: #64748b;
+                font-size: 13px;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <div>
+                    <h1 class="title">&#x1F6E1;&#xFE0F; LogSentinel</h1>
+                    <p class="subtitle">Security log monitoring dashboard with SQLite + Flask API</p>
+                </div>
+            </div>
+
+            <div class="search-card">
+                <form method="get" class="search-form">
+                    <input
+                        class="search-input"
+                        type="text"
+                        name="q"
+                        placeholder="Search by IP, event type, or message..."
+                        value="{{ query }}"
+                    >
+                    <button class="search-btn" type="submit">Search</button>
+                </form>
+            </div>
+
+            <div class="stats-grid">
+                <div class="card">
+                    <h3>Total Displayed Events</h3>
+                    <div class="big-number">{{ total_events }}</div>
+                </div>
+
+                <div class="card">
+                    <h3>Count by Event Type</h3>
+                    {{ event_type_html }}
+                </div>
+
+                <div class="card">
+                    <h3>Top 5 Source IPs</h3>
+                    {{ top_ips_html }}
+                </div>
+            </div>
+
+            <div class="table-card">
+                <div class="table-header">Detected Security Events</div>
+                <table>
+                    <tr>
+                        <th>ID</th>
+                        <th>Timestamp</th>
+                        <th>Severity</th>
+                        <th>Source IP</th>
+                        <th>Event Type</th>
+                        <th>Message</th>
+                    </tr>
+                    {{ rows_html }}
+                </table>
+            </div>
+
+            <p class="footer-note">
+                Tip: Try searches like <strong>failed_login</strong>, <strong>admin_probe</strong>, or an IP such as <strong>185.23.44.12</strong>.
+            </p>
+        </div>
     </body>
     </html>
-    """
+    """.replace("{{ query }}", query).replace("{{ total_events }}", str(stats["total_events"])).replace("{{ event_type_html }}", event_type_html).replace("{{ top_ips_html }}", top_ips_html).replace("{{ rows_html }}", rows_html)
 
     return html
 
@@ -181,7 +379,19 @@ def api_events():
     else:
         events = get_all_events()
 
-    return jsonify([event_to_dict(event) for event in events])
+    data = []
+    for event in events:
+        data.append({
+            "id": event[0],
+            "timestamp": event[1],
+            "severity": event[2],
+            "source_ip": event[3],
+            "event_type": event[4],
+            "message": event[5],
+        })
+
+    return jsonify(data)
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=False)
