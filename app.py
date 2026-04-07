@@ -1,5 +1,6 @@
 import os
 import smtplib
+import hashlib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
@@ -16,6 +17,7 @@ MAIL_PASSWORD = os.environ.get("MAIL_PASSWORD", "")
 
 def send_alert_email(event_type, source_ip, message):
     if not MAIL_USER or not MAIL_PASSWORD:
+        print("[EMAIL ERROR] MAIL_USER or MAIL_PASSWORD not set")
         return
 
     try:
@@ -36,9 +38,14 @@ Check your dashboard: https://logsentinel-bm52.onrender.com
 
         msg.attach(MIMEText(body, "plain"))
 
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+        with smtplib.SMTP("smtp.gmail.com", 587, timeout=20) as server:
+            server.ehlo()
+            server.starttls()
+            server.ehlo()
             server.login(MAIL_USER, MAIL_PASSWORD)
             server.sendmail(MAIL_USER, MAIL_USER, msg.as_string())
+
+        print(f"[EMAIL SENT] {event_type} | {source_ip}")
 
     except Exception as e:
         print(f"[EMAIL ERROR] {e}")
@@ -47,7 +54,6 @@ Check your dashboard: https://logsentinel-bm52.onrender.com
 def run_collector_with_alerts():
     from analyzer import analyze_line
     from database import save_event
-    import hashlib
 
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     LOG_FILE = os.path.join(BASE_DIR, "sample_logs", "server.log")
@@ -85,6 +91,7 @@ def run_collector_with_alerts():
                 print(f"[ALERTA] {result['event_type']} | {result['source_ip']} | {result['message']}")
 
 
+# Procesa logs al iniciar la app
 run_collector_with_alerts()
 
 
@@ -507,7 +514,16 @@ def home():
         </div>
     </body>
     </html>
-    """.replace("{{ query }}", query).replace("{{ total_events }}", str(stats["total_events"])).replace("{{ event_type_html }}", event_type_html).replace("{{ top_ips_html }}", top_ips_html).replace("{{ rows_html }}", rows_html).replace("{{ selected_error }}", selected_error).replace("{{ selected_warning }}", selected_warning).replace("{{ selected_info }}", selected_info).replace("{{ date_from }}", date_from).replace("{{ date_to }}", date_to)
+    """.replace("{{ query }}", query)\
+      .replace("{{ total_events }}", str(stats["total_events"]))\
+      .replace("{{ event_type_html }}", event_type_html)\
+      .replace("{{ top_ips_html }}", top_ips_html)\
+      .replace("{{ rows_html }}", rows_html)\
+      .replace("{{ selected_error }}", selected_error)\
+      .replace("{{ selected_warning }}", selected_warning)\
+      .replace("{{ selected_info }}", selected_info)\
+      .replace("{{ date_from }}", date_from)\
+      .replace("{{ date_to }}", date_to)
 
     return html
 
@@ -534,14 +550,21 @@ def api_events():
 
     return jsonify(data)
 
+
+@app.route("/test-email")
+def test_email():
+    send_alert_email(
+        event_type="test_alert",
+        source_ip="127.0.0.1",
+        message="This is a test email from RavenLog"
+    )
+    return "Test email sent (check logs)", 200
+
+
 @app.route("/reset-db")
 def reset_db():
-    import os
-    if os.path.exists("events.db"):
-        os.remove("events.db")
-    init_db()
-    run_collector_with_alerts()
-    return "Database reset and alerts sent!", 200
-    
+    return "Use /test-email to test alerts safely on free Render.", 200
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=False)
