@@ -58,6 +58,12 @@ Check your dashboard: https://logsentinel-bm52.onrender.com
 
         with smtplib.SMTP(timeout=20) as server:
             server.connect(smtp_ip, smtp_port)
+
+            # IMPORTANT:
+            # starttls() uses server._host for TLS hostname validation.
+            # Because we connected by IP, we must restore the real hostname here.
+            server._host = smtp_host
+
             server.ehlo()
             server.starttls()
             server.ehlo()
