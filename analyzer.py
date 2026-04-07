@@ -48,4 +48,39 @@ def analyze_line(line):
             "message": "Suspicious scan on /phpmyadmin",
         }
 
+    if "select " in lower and ("union" in lower or "drop" in lower or "insert" in lower):
+        return {
+            "source_ip": _extract_ip(normalized),
+            "event_type": "sql_injection",
+            "message": "Possible SQL injection attempt detected",
+        }
+
+    if "../" in lower or "..%2f" in lower:
+        return {
+            "source_ip": _extract_ip(normalized),
+            "event_type": "directory_traversal",
+            "message": "Directory traversal attempt detected",
+        }
+
+    if "/etc/passwd" in lower or "/etc/shadow" in lower:
+        return {
+            "source_ip": _extract_ip(normalized),
+            "event_type": "sensitive_file_access",
+            "message": "Attempt to access sensitive system file",
+        }
+
+    if "cmd=" in lower or "exec(" in lower or "/bin/sh" in lower or "/bin/bash" in lower:
+        return {
+            "source_ip": _extract_ip(normalized),
+            "event_type": "shell_injection",
+            "message": "Possible shell injection attempt detected",
+        }
+
+    if "curl" in lower or "wget" in lower and "http" in lower:
+        return {
+            "source_ip": _extract_ip(normalized),
+            "event_type": "suspicious_download",
+            "message": "Suspicious download attempt detected",
+        }
+
     return None
