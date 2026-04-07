@@ -48,8 +48,10 @@ def save_event(timestamp, severity, source_ip, event_type, message, fingerprint=
         (timestamp, severity, source_ip, event_type, message, fingerprint),
     )
 
+    saved = cur.rowcount > 0
     conn.commit()
     conn.close()
+    return saved
 
 
 def get_all_events():
