@@ -33,12 +33,15 @@ def summarize_events(events):
 
 @app.route("/")
 def home():
-    query = request.args.get("q", "").strip()
+query = request.args.get("q", "").strip()
+severity_filter = request.args.get("severity", "").strip().upper()
+  if query:
+    events = search_events(query)
+else:
+    events = get_all_events()
 
-    if query:
-        events = search_events(query)
-    else:
-        events = get_all_events()
+if severity_filter:
+    events = [e for e in events if e[2] == severity_filter]
 
     stats = summarize_events(events)
 
