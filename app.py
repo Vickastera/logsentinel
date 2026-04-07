@@ -534,6 +534,14 @@ def api_events():
 
     return jsonify(data)
 
-
+@app.route("/reset-db")
+def reset_db():
+    import os
+    if os.path.exists("events.db"):
+        os.remove("events.db")
+    init_db()
+    run_collector_with_alerts()
+    return "Database reset and alerts sent!", 200
+    
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=False)
